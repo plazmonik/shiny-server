@@ -9,40 +9,32 @@ library(leaflet) #for maps
 source('ladowanie_danych.R', encoding = 'UTF-8')
 source('obsluga_sumowania.R', encoding = 'UTF-8')
 source('wykresy.R', encoding = 'UTF-8')
-source('wykresy_pogody.R', encoding = 'UTF-8')
-
-dane_polaczone<-wczytaj_dane() #wczytuje wstepnie obrobione dane z csv
-
-dane_polaczone<-suma_licznikow(dane_polaczone)
+source('read_from_api.R', encoding = 'UTF-8')
 
 #reading locations
-lokacje <- read.csv("czujniki_rowerowe.csv",dec=",", encoding='UTF-8')
+lokacje <- read.csv("pliki/czujniki_rowerowe.csv",dec=",", encoding='UTF-8')
 sapply(lokacje,"class")
 
-listy_stylow<-zrob_listy_stylow(dane_polaczone)
-kolory<-listy_stylow[1,]
-lista_linii<-listy_stylow[2,]
-lista_fontow<-listy_stylow[3,]
+#reading colors etc
+listy_stylow<-data.table(read.csv(file = "pliki/listy_stylow.csv", fileEncoding = 'UTF-8', colClasses = "character"))
 
-nazwy<-names(dane_polaczone)[4:ncol(dane_polaczone)]
+#reading data
+dane_long<-wczytaj_dane("pliki/dane_long.csv")
+nazwy<-unique(dane_long[,Miejsce])
 
-dane_polaczone<-dodaj_pogode(dane_polaczone)
+#dane_tyg<-podsumuj.tygodnie(dane_long)
+#dane_m<-podsumuj.miesiace(dane_long)
 
-dane_long<-wide_to_long(dane_polaczone)
-dane_tyg<-podsumuj.tygodnie(dane_long)
-dane_m<-podsumuj.miesiace(dane_long)
-
-zakresOd=  '2014-08-01'
-zakresOdPokaz='2017-02-01'
-zakresDo = '2017-04-19'
-zakresDoPogoda= '2017-03-31'
-
+zakresOd=  min(dane_long[,Data])
+zakresDo = max(dane_long[,Data]) 
+zakresDoPogoda= '2017-06-30'
 
 okresy = c('dobowo', 'tygodniowo', 'miesięcznie')
+wykresyPogody=c('temperatury', 'daty')
 
-ile_licznikow<-19
-ile_sum<-3
-ile<-ile_licznikow-ile_sum
+#dane godzinowe
+godzinowe<-wczytaj_dane_godzinowe("pliki/dane_godzinowe_long.csv")
+cat(file=stderr(), "przygotowania zakonczone", "\n")
 
 ui <- fluidPage(
   tags$head(
@@ -64,13 +56,13 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       lapply(1:length(nazwy), function(x) {
-        n <- length(nazwy)
+        #n <- length(nazwy)
         css_col <- paste0("#liczniki div.checkbox:nth-child(",x,
-                          ") span{color: ", kolory[x],"; font-weight : ",lista_fontow[x],"}")
+                          ") span{color: ", listy_stylow$kolory[x],"; font-weight : ",listy_stylow[[x,3]],"}")
         tags$style(type="text/css", css_col)
       }),
       checkboxGroupInput('liczniki', 'Wybierz miejsca', nazwy, 
-                         selected = nazwy[c(4,20)], inline = FALSE, width = NULL),
+                         selected = nazwy[c(1,7,12)], inline = FALSE, width = NULL),
       style= "padding: 10px 0px 0px 20px;"
     ),
     mainPanel(
@@ -79,8 +71,9 @@ ui <- fluidPage(
                  #wybor zakresu i grupowania daty
                  wellPanel(fluidRow(
                    column(5, #daty
-                          dateRangeInput('zakres', 'Wybierz zakres dat', 
-                                         start=zakresOdPokaz, end=zakresDo, min=zakresOd, max=zakresDo,
+                          dateRangeInput('zakres', 'Wybierz zakres dat',
+                                         start=as.character(Sys.Date()-100), end=as.character(Sys.Date()-1), 
+                                         min=zakresOd, max=as.character(Sys.Date()-1),
                                          separator = 'do', weekstart = 0, language = "pl")
                    ),
                    column(7, #dobowo/tygodniowo/miesiecznie
@@ -91,19 +84,40 @@ ui <- fluidPage(
                  div(id = "plotDiv", #wykres
                      style = "position:relative",
                      alt = "Ile rowerów jeździ w Warszawie",
-                   plotOutput('plot1', height=480, hover = hoverOpts(id = "plot_hover", delay = 100)),
+                   plotOutput('plotLiczba', height=480, hover = hoverOpts(id = "plot_hover", delay = 100)),
                    uiOutput("bike_date_tooltip")
                  )
         ),
         tabPanel("Pogoda",
-                 tags$p(), 
+                 #wybor zakresu i grupowania daty
+                 wellPanel(fluidRow(
+
+                   column(4, #dobowo/tygodniowo/miesiecznie
+                          radioButtons('rodzajPogody', 'Zależność od', wykresyPogody, selected = wykresyPogody[2], 
+                                       inline = TRUE, width = NULL)        
+                   ),
+                   column(6, #daty
+                          dateRangeInput('zakresPogoda', 'Wybierz zakres dat',
+                                         start=as.character(as.Date(zakresDoPogoda)-120), end=zakresDoPogoda,
+                                         min=zakresOd, max=zakresDoPogoda,
+                                         separator = 'do', weekstart = 0, language = "pl")
+                   )
+                 ), style= "padding: 10px 0px 0px 20px;"), #end wellPanel
                  div(id = "weatherPlotDiv", 
                      style = "position:relative",
                      alt = "Ile rowerów w zależności od pogody",
-                     plotOutput('plot2', height=500, hover = hoverOpts(id = "plot_hover", delay = 100)),
+                     plotOutput('plotPogoda', height=500, hover = hoverOpts(id = "plot_hover", delay = 100)),
                      uiOutput("bike_weather_tooltip")
                  )
         ),
+        # tabPanel("Dane godzinowe",
+        #          tags$p(), 
+        #          div(id = "hoursPlotDiv", 
+        #              style = "position:relative",
+        #              #alt = "Ile rowerów w zależności od pogody",
+        #              plotOutput('plotHours', height=500)
+        #          )
+        # ),
         tabPanel("Położenie liczników",
                  tags$p(), 
                  div(id = "mapPlotDiv", 
@@ -128,7 +142,7 @@ ui <- fluidPage(
                  tags$p(
                    'Autorka aplikacji: Monika Pawłowska (kontakt:',
                    tags$a(href='rowery@greenelephant.pl', "rowery@greenelephant.pl"),
-                   '). Kod i dane źródłowe dostępne są',
+                   '), mapa: Adam Kolipiński. Kod i dane źródłowe dostępne są',
                    tags$a(href='https://github.com/pawlowska/shiny-server/tree/master/rowery', 'tu.'))
         ) #end of "O..."
         
@@ -137,43 +151,107 @@ ui <- fluidPage(
   )
 ) #end ui
 
-server <- function(input, output) {
+server <- function(input, output, session) {
+  #dane zaladowane od ostatniego git commit
+  cat(file=stderr(), "probuje wczytac nowe_long", "\n")
+  ostatnie_nowe_long<-wczytaj_dane("pliki/nowe_long.csv")
+  ostatnia_data<-max(ostatnie_nowe_long[,Data])
+  cat(file=stderr(), "ostatnia data w pliku nowe_long", as.character(ostatnia_data), "\n")
+  
+  #czy są nowsze dane niż w "nowe_long.csv"?  
+  if (ostatnia_data<Sys.Date()-1) {
+        ids<-read_counterids()
+        nowe_dane<-zaladuj_dane_api(ids=ids, od=ostatnia_data)
+        nowe_dane<-suma_licznikow(numery_dat(nowe_dane))
+        #nowe_z_pogoda<-dodaj_pogode(nowe_dane)
+        nowe_long<-wide_to_long(dodaj_pogode(nowe_dane))
+        ostatnie_nowe_long<-rbind(ostatnie_nowe_long[Data<ostatnia_data], nowe_long)
+        
+        setorder(ostatnie_nowe_long, "Data")
+        #uaktualnij "nowe" dane
+        write.csv(ostatnie_nowe_long[Data>zakresDo], file = "pliki/nowe_long.csv", fileEncoding = 'UTF-8')
+  }
+  
+  cat(file=stderr(), "ostatnia uaktualniona data", as.character(max(ostatnie_nowe_long[,Data])), "\n")
+  
+  #polacz ze "starymi" danymi
+  dane_long<-rbind(dane_long, ostatnie_nowe_long[Data>zakresDo])
+  #setorder(dane_long, Miejsce)
+  
+  dane_tyg<-podsumuj.tygodnie(dane_long)
+  #setorder(dane_tyg, Miejsce)
+  
+  dane_m<-podsumuj.miesiace(dane_long)
+  #setorder(dane_m, Miejsce)
+  
+  zakresDo<-as.character(Sys.Date()-1)
+  
   indeksy<-reactive({ #ktore kolory beda uzyte
-    match(input$liczniki, nazwy)
-    })
+    shiny::validate(
+      need(input$liczniki, 'Wybierz przynajmniej jedno miejsce!'))
+    match(unique(data()$Miejsce), nazwy)
+  })
   
   data <- reactive({
     zakres_dat=interval(input$zakres[1], input$zakres[2])
-    if (input$okres==okresy[2]) {
-      dane_tyg[Data %within% zakres_dat & Miejsce %in% input$liczniki]
-      }
-    else if (input$okres==okresy[3]) {
-      dane_m[Data %within% zakres_dat & Miejsce %in% input$liczniki]
-      }
-    else {
-      dane_long[Data %within% zakres_dat & Miejsce %in% input$liczniki]
-      }
+    #pick daily, weekly or monthly data
+    if (input$okres==okresy[2])       {wybor<-dane_tyg}
+    else if (input$okres==okresy[3])  {wybor<-dane_m}
+    else {wybor<-dane_long}
+    wybor[Data %within% zakres_dat & Miejsce %in% input$liczniki]
   })
   
   data_with_weather <- reactive({
-    zakres_dat=interval(zakresOd, zakresDoPogoda)
+    #zakres_dat=interval(zakresOd, zakresDoPogoda)
+    zakres_dat=interval(input$zakresPogoda[1], input$zakresPogoda[2])
+    
     dane_long[Data %within% zakres_dat & Miejsce %in% input$liczniki]
   })
   
+  data_hourly <- reactive({
+    godzinowe[Miejsce %in% input$liczniki]
+  })
+  
   uzyte_kolory<-reactive({
-    kolory[indeksy()]
+    listy_stylow$kolory[indeksy()]
   })
   
-  output$plot1 <- renderPlot({
-    uzyte_linie <-lista_linii[indeksy()]
+  uzyte_linie<-reactive({
+    listy_stylow$linie[indeksy()]
+  })
+  
+  output$plotLiczba <- renderPlot({
+    shiny::validate(
+      need((input$zakres[1]>=zakresOd)&(input$zakres[2]>=zakresOd), 
+           paste("Data spoza zakresu - dostępne dane od", zakresOd)),
+      need((input$zakres[1]<=zakresDo)&(input$zakres[2]<=zakresDo), 
+           paste("Data spoza zakresu - dostępne dane do", zakresDo)),
+      need(input$liczniki, 'Wybierz przynajmniej jedno miejsce!')
+    )
     wykres_kilka(data(), 
-                 start=input$zakres[1], stop=input$zakres[2], paleta=uzyte_kolory(), linie = uzyte_linie)
+                 start=input$zakres[1], stop=input$zakres[2], paleta=uzyte_kolory(), linie = uzyte_linie())
   })
   
-  output$plot2 <- renderPlot({
-    #print(tail(data_with_weather()))
-    pogoda_basic(data_with_weather(),
-                 paleta=uzyte_kolory())
+  output$plotPogoda <- renderPlot({
+    shiny::validate(
+      need(input$liczniki, 'Wybierz przynajmniej jedno miejsce!')
+    )
+    if(input$rodzajPogody==wykresyPogody[1]) {
+      pogoda_basic(data_with_weather(), paleta=uzyte_kolory())
+    } else {
+      #zakres_dat=interval(input$zakresPogoda[1], input$zakresPogoda[2])
+      
+      #wykres_pogoda_liczba(data_with_weather()[Data %within% zakres_dat],
+      wykres_pogoda_liczba(data_with_weather(),
+                           start=input$zakresPogoda[1], stop=input$zakresPogoda[2], 
+                           paleta=uzyte_kolory(), linie = uzyte_linie())
+    }
+  })
+
+  output$plotHours <- renderPlot({
+    shiny::validate(
+      need(input$liczniki, 'Wybierz przynajmniej jedno miejsce!'))
+    wykres_godzinowy(data_hourly(), paleta=uzyte_kolory(), linie = uzyte_linie())
   })
   
   output$bike_date_tooltip <- renderUI({
@@ -191,7 +269,9 @@ server <- function(input, output) {
     )
   })
   
-  output$bike_weather_tooltip <- renderUI({
+  output$bike_weather_tooltip <- renderUI(
+    if (input$rodzajPogody==wykresyPogody[2]) {return(NULL)}
+    else {
     
     hover <- input$plot_hover
     #is mouse close to a point?
@@ -209,12 +289,12 @@ server <- function(input, output) {
   output$mymap <- renderLeaflet({
     leaflet(lokacje[indeksy(),], options = leafletOptions(maxZoom = 18)) %>% 
     addTiles() %>% 
-    addCircleMarkers(lng = ~lon, lat = ~lat, popup = ~nazwa, radius = 10, color = uzyte_kolory(), opacity=1, weight = 8)
+    addCircleMarkers(lng = ~lon, lat = ~lat, popup = ~Miejsce, radius = 10, color = uzyte_kolory(), opacity=1, weight = 8)
   })
   
 }
 
-tooltip_position<-function(hover, w=120) {   #calculate the position of the tooltip
+tooltip_position<-function(hover, w=130) {   #calculate the position of the tooltip
   #in relative units
   left_pct <- (hover$x - hover$domain$left) / (hover$domain$right - hover$domain$left)
   top_pct <- (hover$domain$top - hover$y) / (hover$domain$top - hover$domain$bottom)
